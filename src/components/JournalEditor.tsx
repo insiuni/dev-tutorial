@@ -15,21 +15,55 @@ import {
   Tag,
   Clock,
   ExternalLink,
+  Brain,
+  Share2,
+  Maximize2,
+  Minimize2,
+  Feather,
 } from 'lucide-react';
 import {
   JournalInteraction,
   ReflectionMode,
   ChatMessage,
   ReflectionPrompt,
+  PerspectiveLens,
+  EmotionalMood,
+  CognitiveClarityInsights,
 } from '../types';
-import { requestReflection, requestSummary, fetchReflectionPrompts } from '../lib/geminiClient';
+import {
+  requestReflection,
+  requestSummary,
+  requestClarity,
+  fetchReflectionPrompts,
+} from '../lib/geminiClient';
 import { createJournalInteraction, updateJournalInteraction } from '../lib/journalService';
+import { ReflectionCardModal } from './ReflectionCardModal';
+import { CognitiveClarityCard } from './CognitiveClarityCard';
+
+const EMOTIONAL_MOODS: { id: EmotionalMood; label: string; icon: string; ringColor: string }[] = [
+  { id: 'reflective', label: 'Reflective', icon: '🌿', ringColor: 'border-emerald-400 text-emerald-900 bg-emerald-50' },
+  { id: 'grateful', label: 'Grateful', icon: '☀️', ringColor: 'border-amber-400 text-amber-900 bg-amber-50' },
+  { id: 'anxious', label: 'Overwhelmed', icon: '🌪️', ringColor: 'border-violet-400 text-violet-900 bg-violet-50' },
+  { id: 'inspired', label: 'Inspired', icon: '💡', ringColor: 'border-yellow-400 text-yellow-900 bg-yellow-50' },
+  { id: 'heavy', label: 'Heavy', icon: '🌙', ringColor: 'border-slate-400 text-slate-900 bg-slate-100' },
+  { id: 'resolute', label: 'Resolute', icon: '🏔️', ringColor: 'border-stone-500 text-stone-900 bg-stone-100' },
+];
+
+const PERSPECTIVE_LENSES: { id: PerspectiveLens; title: string; subtitle: string; icon: string }[] = [
+  { id: 'mindful', title: 'Mindful', subtitle: 'Present grounding & acceptance', icon: '🌿' },
+  { id: 'stoic', title: 'Stoic', subtitle: 'Control vs external fortitude', icon: '🏛️' },
+  { id: 'compassionate', title: 'Compassion', subtitle: 'Self-kindness & warm validation', icon: '🕊️' },
+  { id: 'future_self', title: 'Future Self', subtitle: '5-year vantage & calm wisdom', icon: '🔮' },
+  { id: 'socratic', title: 'Socratic', subtitle: 'Deep assumption inquiry', icon: '⚖️' },
+];
 
 interface JournalEditorProps {
   userId: string;
   activeInteraction: JournalInteraction | null;
   onInteractionSaved: (savedInteraction: JournalInteraction) => void;
   onNewEntryRequested: () => void;
+  zenMode?: boolean;
+  onToggleZenMode?: () => void;
 }
 
 export function JournalEditor({
@@ -37,13 +71,22 @@ export function JournalEditor({
   activeInteraction,
   onInteractionSaved,
   onNewEntryRequested,
+  zenMode = false,
+  onToggleZenMode,
 }: JournalEditorProps) {
   // Input states
   const [title, setTitle] = useState('');
   const [entryText, setEntryText] = useState('');
   const [mode, setMode] = useState<ReflectionMode>('reflection');
+  const [lens, setLens] = useState<PerspectiveLens>('mindful');
+  const [mood, setMood] = useState<EmotionalMood | undefined>(undefined);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+
+  // Cognitive Clarity & Modals
+  const [clarityInsights, setClarityInsights] = useState<CognitiveClarityInsights | null>(null);
+  const [isAnalyzingClarity, setIsAnalyzingClarity] = useState(false);
+  const [showCardModal, setShowCardModal] = useState(false);
 
   // Conversation & AI states
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
@@ -80,6 +123,9 @@ export function JournalEditor({
       setTitle(activeInteraction.title || '');
       setEntryText(activeInteraction.entryText || '');
       setMode(activeInteraction.mode || 'reflection');
+      setLens(activeInteraction.lens || 'mindful');
+      setMood(activeInteraction.mood);
+      setClarityInsights(activeInteraction.clarityInsights || null);
       setTags(activeInteraction.tags || []);
       setConversation(activeInteraction.conversation || []);
       setLatestAiResponse(activeInteraction.aiResponse || '');
@@ -90,6 +136,9 @@ export function JournalEditor({
       setTitle('');
       setEntryText('');
       setMode('reflection');
+      setLens('mindful');
+      setMood(undefined);
+      setClarityInsights(null);
       setTags([]);
       setConversation([]);
       setLatestAiResponse('');
@@ -138,6 +187,9 @@ export function JournalEditor({
       entryText: entryText.trim(),
       aiResponse: overrideData.aiResponse ?? latestAiResponse,
       mode: overrideData.mode ?? mode,
+      lens: overrideData.lens ?? lens,
+      mood: overrideData.mood ?? mood,
+      clarityInsights: overrideData.clarityInsights ?? (clarityInsights || undefined),
       conversation: overrideData.conversation ?? conversation,
       tags: overrideData.tags ?? tags,
       createdAt: activeInteraction?.createdAt || new Date().toISOString(),
@@ -186,8 +238,8 @@ export function JournalEditor({
     setIsGenerating(true);
 
     try {
-      // 1. Call Gemini API via resilient server proxy
-      const result = await requestReflection(trimmedInput, targetMode, conversation);
+      // 1. Call Gemini API via resilient server proxy with selected lens
+      const result = await requestReflection(trimmedInput, targetMode, conversation, lens);
       setActiveModelUsed(result.modelUsed);
 
       const userMsg: ChatMessage = {
@@ -214,6 +266,8 @@ export function JournalEditor({
         aiResponse: result.text,
         conversation: updatedConversation,
         mode: targetMode,
+        lens,
+        mood,
       });
     } catch (err: any) {
       console.error('Reflection request failed:', err);
@@ -222,6 +276,31 @@ export function JournalEditor({
       setSaveStatus('error');
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  // Unique Action: Cognitive Clarity & Emotional Landscape Analysis
+  const handleGenerateClarity = async () => {
+    const trimmedInput = entryText.trim();
+    if (!trimmedInput) {
+      setErrorMessage('Please write your thoughts before analyzing cognitive clarity.');
+      return;
+    }
+
+    setErrorMessage(null);
+    setIsAnalyzingClarity(true);
+
+    try {
+      const result = await requestClarity(trimmedInput);
+      setClarityInsights(result);
+      await persistToFirestore({
+        clarityInsights: result,
+      });
+    } catch (err: any) {
+      console.error('Clarity analysis failed:', err);
+      setErrorMessage(err?.message || 'Failed to analyze cognitive clarity.');
+    } finally {
+      setIsAnalyzingClarity(false);
     }
   };
 
@@ -257,6 +336,8 @@ export function JournalEditor({
         aiResponse: result.summary,
         conversation: updatedConversation,
         mode: 'summary',
+        lens,
+        mood,
       });
     } catch (err: any) {
       setErrorMessage(err?.message || 'Summarization failed. Please try again.');
@@ -406,6 +487,45 @@ export function JournalEditor({
             ) : null}
           </div>
 
+          {/* Thought Card Share Button */}
+          {(entryText.trim() || latestAiResponse) && (
+            <button
+              id="editor-open-card-modal-btn"
+              onClick={() => setShowCardModal(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 transition cursor-pointer"
+              title="Generate shareable insight card"
+            >
+              <Share2 className="h-3.5 w-3.5 text-stone-600" />
+              <span className="hidden sm:inline">Thought Card</span>
+            </button>
+          )}
+
+          {/* Zen Mode Toggle Button */}
+          {onToggleZenMode && (
+            <button
+              id="editor-zen-mode-btn"
+              onClick={onToggleZenMode}
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${
+                zenMode
+                  ? 'border-stone-900 bg-stone-900 text-white'
+                  : 'border-stone-200 bg-white text-stone-700 hover:bg-stone-50'
+              }`}
+              title={zenMode ? 'Exit Zen Mode' : 'Enter Zen Focus Mode'}
+            >
+              {zenMode ? (
+                <>
+                  <Minimize2 className="h-3.5 w-3.5" />
+                  <span className="hidden md:inline">Exit Zen</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="h-3.5 w-3.5" />
+                  <span className="hidden md:inline">Zen Mode</span>
+                </>
+              )}
+            </button>
+          )}
+
           <button
             id="editor-manual-save-btn"
             onClick={() => persistToFirestore()}
@@ -513,6 +633,65 @@ export function JournalEditor({
           />
         </div>
 
+        {/* Emotional Resonance / Mood Selector */}
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <span className="text-xs font-medium text-stone-500 mr-1 flex items-center gap-1">
+            <Feather className="h-3 w-3 text-stone-400" />
+            Resonance:
+          </span>
+          {EMOTIONAL_MOODS.map((m) => {
+            const isSelected = mood === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setMood(isSelected ? undefined : m.id)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition cursor-pointer border ${
+                  isSelected
+                    ? `${m.ringColor} shadow-xs font-semibold ring-1 ring-inset ring-current`
+                    : 'border-stone-200/80 bg-white text-stone-600 hover:border-stone-300 hover:bg-stone-50'
+                }`}
+              >
+                <span>{m.icon}</span>
+                <span>{m.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Perspective Lens Selector */}
+        <div className="rounded-xl border border-stone-200/90 bg-stone-50/60 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-stone-500 flex items-center gap-1.5">
+              <Compass className="h-3.5 w-3.5 text-stone-500" />
+              Perspective Lens
+            </span>
+            <span className="text-[11px] text-stone-500 font-medium">
+              {PERSPECTIVE_LENSES.find((l) => l.id === lens)?.subtitle}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+            {PERSPECTIVE_LENSES.map((l) => {
+              const isActive = lens === l.id;
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => setLens(l.id)}
+                  className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition cursor-pointer border ${
+                    isActive
+                      ? 'border-stone-900 bg-white text-stone-900 shadow-xs font-semibold'
+                      : 'border-transparent text-stone-600 hover:bg-white/70 hover:text-stone-900'
+                  }`}
+                >
+                  <span>{l.icon}</span>
+                  <span>{l.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Main Journal Textarea */}
         <div className="relative rounded-2xl border border-stone-200 bg-white shadow-xs focus-within:border-stone-400 focus-within:ring-1 focus-within:ring-stone-400 transition">
           <textarea
@@ -534,10 +713,22 @@ export function JournalEditor({
             {/* Action buttons */}
             <div className="flex items-center gap-2">
               <button
+                id="editor-clarity-btn"
+                type="button"
+                onClick={handleGenerateClarity}
+                disabled={isAnalyzingClarity || isGenerating || !entryText.trim()}
+                className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-3 py-1.5 text-xs font-medium text-indigo-900 hover:bg-indigo-100/80 transition disabled:opacity-40 cursor-pointer"
+                title="Synthesize cognitive patterns, cognitive reframes, and micro-intentions"
+              >
+                <Brain className="h-3.5 w-3.5 text-indigo-600" />
+                <span>{isAnalyzingClarity ? 'Analyzing Clarity...' : 'Cognitive Clarity'}</span>
+              </button>
+
+              <button
                 id="editor-summarize-btn"
                 type="button"
                 onClick={handleGenerateSummary}
-                disabled={isGenerating || !entryText.trim()}
+                disabled={isGenerating || isAnalyzingClarity || !entryText.trim()}
                 className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100 transition disabled:opacity-40 cursor-pointer"
               >
                 <FileText className="h-3.5 w-3.5 text-stone-600" />
@@ -548,7 +739,7 @@ export function JournalEditor({
                 id="editor-reflect-gemini-btn"
                 type="button"
                 onClick={() => handleGenerateReflection()}
-                disabled={isGenerating || !entryText.trim()}
+                disabled={isGenerating || isAnalyzingClarity || !entryText.trim()}
                 className="flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-stone-800 transition disabled:opacity-40 cursor-pointer"
               >
                 <Sparkles className="h-3.5 w-3.5 text-amber-300" />
@@ -557,6 +748,16 @@ export function JournalEditor({
             </div>
           </div>
         </div>
+
+        {/* Cognitive Clarity Card (when generated or loaded from history) */}
+        {clarityInsights && (
+          <CognitiveClarityCard
+            insights={clarityInsights}
+            onApplyIntention={(intention) => {
+              setEntryText((prev) => prev.trim() + `\n\n**Action Intention:** ${intention}`);
+            }}
+          />
+        )}
 
         {/* Tags management */}
         <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
@@ -704,6 +905,18 @@ export function JournalEditor({
           </div>
         )}
       </div>
+
+      {/* Shareable Thought Card Modal */}
+      <ReflectionCardModal
+        isOpen={showCardModal}
+        onClose={() => setShowCardModal(false)}
+        title={title || 'Journal Reflection'}
+        entryText={entryText}
+        reflectionText={latestAiResponse}
+        tags={tags}
+        lens={lens}
+        mood={mood}
+      />
     </div>
   );
 }

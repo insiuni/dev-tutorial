@@ -1,5 +1,16 @@
 export type ReflectionMode = 'reflection' | 'summary' | 'brainstorm' | 'chat';
 
+export type PerspectiveLens = 'mindful' | 'stoic' | 'compassionate' | 'future_self' | 'socratic';
+
+export type EmotionalMood = 'reflective' | 'grateful' | 'anxious' | 'inspired' | 'heavy' | 'resolute';
+
+export interface CognitiveClarityInsights {
+  sentiment: string;
+  keyTheme: string;
+  cognitiveReframe: string;
+  microIntention: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'model';
@@ -15,6 +26,9 @@ export interface JournalInteraction {
   entryText: string;
   aiResponse: string;
   mode: ReflectionMode;
+  lens?: PerspectiveLens;
+  mood?: EmotionalMood;
+  clarityInsights?: CognitiveClarityInsights;
   conversation: ChatMessage[];
   tags?: string[];
   createdAt: string;

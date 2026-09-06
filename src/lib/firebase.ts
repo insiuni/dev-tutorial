@@ -30,9 +30,22 @@ export async function signInWithGoogle() {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
-  } catch (error) {
-    console.error('Sign-in error:', error);
-    throw error;
+  } catch (error: any) {
+    const code = error?.code;
+    let friendlyMessage = error?.message || 'Authentication failed.';
+    if (code === 'auth/popup-closed-by-user') {
+      friendlyMessage = 'Sign-in was closed before completing. Click again to continue.';
+    } else if (code === 'auth/popup-blocked') {
+      friendlyMessage = 'Sign-in popup was blocked by your browser. Please enable popups or open the app in a new tab.';
+    } else if (code === 'auth/cancelled-popup-request') {
+      friendlyMessage = 'Sign-in request was replaced by another attempt.';
+    } else if (code === 'auth/unauthorized-domain') {
+      friendlyMessage = 'This application domain is not authorized in Firebase Console > Authentication > Settings.';
+    }
+    const enhancedError = new Error(friendlyMessage);
+    (enhancedError as any).code = code;
+    console.warn('Sign-in issue:', friendlyMessage);
+    throw enhancedError;
   }
 }
 

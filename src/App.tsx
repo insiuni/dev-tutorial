@@ -17,6 +17,7 @@ export default function App() {
   const [interactions, setInteractions] = useState<JournalInteraction[]>([]);
   const [activeInteraction, setActiveInteraction] = useState<JournalInteraction | null>(null);
   const [interactionsLoading, setInteractionsLoading] = useState(false);
+  const [zenMode, setZenMode] = useState(false);
 
   // Auth observer
   useEffect(() => {
@@ -142,20 +143,24 @@ export default function App() {
         onSignOut={handleSignOut}
         onNewEntry={handleNewEntry}
         activeModel="gemini-3.6-flash"
+        zenMode={zenMode}
+        onToggleZenMode={() => setZenMode((prev) => !prev)}
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar: Journal History */}
-        <div className="w-80 shrink-0 hidden md:block">
-          <HistorySidebar
-            interactions={interactions}
-            selectedId={activeInteraction?.id || null}
-            onSelectInteraction={handleSelectInteraction}
-            onDeleteInteraction={handleDeleteInteraction}
-            onNewEntry={handleNewEntry}
-            isLoading={interactionsLoading}
-          />
-        </div>
+        {/* Left Sidebar: Journal History (collapsible via Zen Mode) */}
+        {!zenMode && (
+          <div className="w-80 shrink-0 hidden md:block transition-all duration-300">
+            <HistorySidebar
+              interactions={interactions}
+              selectedId={activeInteraction?.id || null}
+              onSelectInteraction={handleSelectInteraction}
+              onDeleteInteraction={handleDeleteInteraction}
+              onNewEntry={handleNewEntry}
+              isLoading={interactionsLoading}
+            />
+          </div>
+        )}
 
         {/* Center Canvas: Active Journal Editor & Multi-turn Reflection */}
         <main className="flex-1 flex flex-col overflow-hidden">
@@ -164,6 +169,8 @@ export default function App() {
             activeInteraction={activeInteraction}
             onInteractionSaved={handleInteractionSaved}
             onNewEntryRequested={handleNewEntry}
+            zenMode={zenMode}
+            onToggleZenMode={() => setZenMode((prev) => !prev)}
           />
         </main>
       </div>
